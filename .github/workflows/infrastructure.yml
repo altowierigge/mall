@@ -1,0 +1,246 @@
+name: Infrastructure Management
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'docker-compose.yml'
+      - 'nginx/**'
+      - 'monitoring/**'
+      - '.github/workflows/infrastructure.yml'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Infrastructure action'
+        required: true
+        default: 'deploy'
+        type: choice
+        options:
+          - deploy
+          - backup
+          - restore
+          - scale
+          - maintenance
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Validate Docker Compose
+        run: |
+          docker-compose config
+          docker-compose -f docker-compose.yml -f docker-compose.prod.yml config
+      
+      - name: Validate Nginx configuration
+        run: |
+          docker run --rm -v $PWD/nginx:/etc/nginx/conf.d nginx:alpine nginx -t
+      
+      - name: Validate Prometheus configuration
+        run: |
+          docker run --rm -v $PWD/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml prom/prometheus:latest promtool check config /etc/prometheus/prometheus.yml
+      
+      - name: Security scan for infrastructure
+        run: |
+          # Check for common security misconfigurations
+          grep -r "latest" docker-compose.yml || echo "Good: No 'latest' tags found"
+          grep -r "privileged: true" docker-compose.yml && echo "Warning: Privileged containers found" || echo "Good: No privileged containers"
+          grep -r "network_mode: host" docker-compose.yml && echo "Warning: Host networking found" || echo "Good: No host networking"
+
+  deploy-infrastructure:
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event.inputs.action == 'deploy')
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Deploy infrastructure
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT }}
+          script: |
+            cd /var/www/mall-app/current
+            
+            # Update infrastructure configurations
+            docker-compose -f docker-compose.yml -f docker-compose.prod.yml pull
+            
+            # Update Nginx configuration
+            docker-compose exec nginx nginx -s reload
+            
+            # Update monitoring stack
+            docker-compose restart prometheus grafana
+            
+            # Verify all services are healthy
+            sleep 30
+            docker-compose ps
+            
+            # Health checks
+            curl -f http://localhost/health || exit 1
+            curl -f http://localhost:9090/-/healthy || exit 1
+            curl -f http://localhost:3003/api/health || exit 1
+
+  backup:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'backup' || github.event_name == 'schedule'
+    environment: production
+    
+    steps:
+      - name: Backup database and configurations
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT }}
+          script: |
+            cd /var/www/mall-app/current
+            
+            # Create backup directory
+            BACKUP_DIR="/backup/$(date +%Y%m%d-%H%M%S)"
+            mkdir -p $BACKUP_DIR
+            
+            # Backup database
+            docker-compose exec -T postgres pg_dump -U mall_user mall_app_production > $BACKUP_DIR/database.sql
+            
+            # Backup configurations
+            cp -r . $BACKUP_DIR/config
+            
+            # Backup volumes
+            docker run --rm -v mall_postgres_data:/source -v $BACKUP_DIR:/backup alpine tar czf /backup/postgres_data.tar.gz -C /source .
+            docker run --rm -v mall_uploads_data:/source -v $BACKUP_DIR:/backup alpine tar czf /backup/uploads_data.tar.gz -C /source .
+            
+            # Upload to cloud storage (AWS S3)
+            aws s3 sync $BACKUP_DIR s3://${{ secrets.BACKUP_BUCKET }}/mall-app/$(date +%Y%m%d-%H%M%S)/
+            
+            # Cleanup old local backups (keep last 7 days)
+            find /backup -type d -mtime +7 -exec rm -rf {} \;
+      
+      - name: Verify backup
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT }}
+          script: |
+            # List recent backups
+            aws s3 ls s3://${{ secrets.BACKUP_BUCKET }}/mall-app/ --human-readable --summarize
+
+  scale:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'scale'
+    environment: production
+    
+    steps:
+      - name: Scale services
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT }}
+          script: |
+            cd /var/www/mall-app/current
+            
+            # Scale backend services
+            docker-compose up -d --scale backend=3
+            
+            # Wait for services to be ready
+            sleep 60
+            
+            # Verify scaling
+            docker-compose ps
+            
+            # Health check all instances
+            for i in {1..3}; do
+              curl -f http://localhost:300$i/api/v1/health || exit 1
+            done
+
+  maintenance:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'maintenance'
+    environment: production
+    
+    steps:
+      - name: Maintenance mode
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT }}
+          script: |
+            cd /var/www/mall-app/current
+            
+            # Enable maintenance mode
+            docker-compose -f docker-compose.yml -f docker-compose.maintenance.yml up -d
+            
+            # Perform maintenance tasks
+            docker-compose exec -T postgres vacuumdb -U mall_user -d mall_app_production --analyze --verbose
+            docker system prune -f
+            docker volume prune -f
+            
+            # Update system packages
+            sudo apt update && sudo apt upgrade -y
+            
+            # Restart services
+            docker-compose restart
+            
+            # Wait for services to be ready
+            sleep 60
+            
+            # Health check
+            curl -f http://localhost/health || exit 1
+            
+            # Disable maintenance mode
+            docker-compose -f docker-compose.yml up -d
+
+  monitoring:
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Infrastructure health check
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.PRODUCTION_HOST }}
+          username: ${{ secrets.PRODUCTION_USER }}
+          key: ${{ secrets.PRODUCTION_SSH_KEY }}
+          port: ${{ secrets.PRODUCTION_PORT }}
+          script: |
+            cd /var/www/mall-app/current
+            
+            # Check service status
+            docker-compose ps
+            
+            # Check system resources
+            df -h
+            free -h
+            docker system df
+            
+            # Check logs for errors
+            docker-compose logs --tail=100 backend | grep -i error || echo "No backend errors"
+            docker-compose logs --tail=100 frontend | grep -i error || echo "No frontend errors"
+            docker-compose logs --tail=100 postgres | grep -i error || echo "No database errors"
+      
+      - name: Send monitoring report
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#infrastructure'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          text: |
+            Infrastructure monitoring report for ${{ github.repository }}
+            Action: ${{ github.event.inputs.action || 'deploy' }}
+            Status: ${{ job.status }}
+            Check logs for detailed information.

@@ -1,0 +1,200 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * 1'  # Weekly scan on Mondays at 2 AM
+
+jobs:
+  dependency-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies (Backend)
+        working-directory: backend
+        run: npm ci
+      
+      - name: Install dependencies (Frontend)
+        working-directory: shop-admin-dashboard
+        run: npm ci
+      
+      - name: Run npm audit (Backend)
+        working-directory: backend
+        run: npm audit --audit-level=moderate
+      
+      - name: Run npm audit (Frontend)
+        working-directory: shop-admin-dashboard
+        run: npm audit --audit-level=moderate
+      
+      - name: Run Snyk vulnerability scan
+        uses: snyk/actions/node@master
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          args: --severity-threshold=high
+          command: test
+
+  code-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript
+      
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+      
+      - name: Run ESLint security rules
+        working-directory: backend
+        run: |
+          npm ci
+          npx eslint . --ext .ts,.js --config .eslintrc.security.json
+      
+      - name: Run Semgrep security scan
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/nodejs
+            p/typescript
+            p/react
+          generateSarif: "1"
+      
+      - name: Upload Semgrep results to GitHub
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+
+  docker-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Build Docker images
+        run: |
+          docker build -t mall-backend:test ./backend
+          docker build -t mall-frontend:test ./shop-admin-dashboard
+      
+      - name: Run Trivy vulnerability scanner (Backend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'mall-backend:test'
+          format: 'sarif'
+          output: 'trivy-backend.sarif'
+      
+      - name: Run Trivy vulnerability scanner (Frontend)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'mall-frontend:test'
+          format: 'sarif'
+          output: 'trivy-frontend.sarif'
+      
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-backend.sarif'
+      
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-frontend.sarif'
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Run GitLeaks secret scanner
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
+      
+      - name: Run TruffleHog secret scanner
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+
+  compliance-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Run OWASP ZAP security baseline scan
+        uses: zaproxy/action-baseline@v0.10.0
+        with:
+          target: 'http://localhost:3000'
+          rules_file_name: '.zap/rules.tsv'
+          cmd_options: '-a'
+      
+      - name: Create security report
+        if: always()
+        run: |
+          mkdir -p security-reports
+          echo "# Security Scan Report" > security-reports/README.md
+          echo "Generated on: $(date)" >> security-reports/README.md
+          echo "" >> security-reports/README.md
+          echo "## Scans Performed" >> security-reports/README.md
+          echo "- Dependency vulnerability scan" >> security-reports/README.md
+          echo "- Code security analysis" >> security-reports/README.md
+          echo "- Container image scanning" >> security-reports/README.md
+          echo "- Secret detection" >> security-reports/README.md
+          echo "- OWASP ZAP baseline scan" >> security-reports/README.md
+      
+      - name: Upload security reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-reports
+          path: security-reports/
+          retention-days: 30
+
+  notify:
+    needs: [dependency-scan, code-scan, docker-scan, secret-scan, compliance-check]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+      - name: Notify security scan results
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#security'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+          fields: repo,message,commit,author,action,eventName,ref,workflow
+          text: |
+            Security scan completed for ${{ github.repository }}
+            Branch: ${{ github.ref }}
+            Status: ${{ job.status }}
+            Check the security reports for details.
