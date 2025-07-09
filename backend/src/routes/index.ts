@@ -6,6 +6,7 @@ import authRoutes from './authRoutes';
 import shopAdminRoutes from './shopAdminRoutes';
 import uploadRoutes from './uploadRoutes';
 import templateRoutes from './templateRoutes';
+import performanceRoutes from './performance';
 
 const router = Router();
 
@@ -25,6 +26,9 @@ router.use('/upload', uploadRoutes);
 
 // Template routes
 router.use('/', templateRoutes);
+
+// Performance monitoring routes
+router.use('/performance', performanceRoutes);
 
 // Health check endpoint
 router.get('/health', (_req, res) => {

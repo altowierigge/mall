@@ -7,6 +7,7 @@ import path from 'path';
 
 import routes from './routes';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+import { performanceMiddleware } from './middleware/performance';
 import { API_CONFIG } from './utils/constants';
 
 // Load environment variables
@@ -29,6 +30,9 @@ app.use(morgan('combined'));
 // Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Performance monitoring middleware
+app.use(performanceMiddleware);
 
 // Serve static files from uploads directory
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));

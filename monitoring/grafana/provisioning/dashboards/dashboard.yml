@@ -1,0 +1,13 @@
+# Dashboard Provisioning Configuration
+# Automatically loads dashboards into Grafana
+
+apiVersion: 1
+
+providers:
+  - name: 'mall-system'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

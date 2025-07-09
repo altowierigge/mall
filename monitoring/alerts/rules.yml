@@ -1,0 +1,223 @@
+# Prometheus Alert Rules
+# Defines alerting conditions for the Mall Admin System
+
+groups:
+  - name: mall-system.rules
+    rules:
+      # High Error Rate Alert
+      - alert: HighErrorRate
+        expr: |
+          (
+            rate(http_requests_total{job="mall-api", status_code=~"5.."}[5m]) / 
+            rate(http_requests_total{job="mall-api"}[5m])
+          ) * 100 > 5
+        for: 2m
+        labels:
+          severity: critical
+          service: mall-api
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} for the Mall API service"
+          runbook_url: "https://docs.mallsystem.com/runbooks/high-error-rate"
+
+      # High Response Time Alert
+      - alert: HighResponseTime
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket{job="mall-api"}[5m])
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: mall-api
+        annotations:
+          summary: "High response time detected"
+          description: "95th percentile response time is {{ $value }}s for Mall API"
+          runbook_url: "https://docs.mallsystem.com/runbooks/high-response-time"
+
+      # Service Down Alert
+      - alert: ServiceDown
+        expr: up{job="mall-api"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: mall-api
+        annotations:
+          summary: "Mall API service is down"
+          description: "Mall API service has been down for more than 1 minute"
+          runbook_url: "https://docs.mallsystem.com/runbooks/service-down"
+
+      # Database Connection Alert
+      - alert: DatabaseDown
+        expr: up{job="postgres"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: postgres
+        annotations:
+          summary: "PostgreSQL database is down"
+          description: "PostgreSQL database has been unreachable for more than 1 minute"
+          runbook_url: "https://docs.mallsystem.com/runbooks/database-down"
+
+      # High Database Connections
+      - alert: HighDatabaseConnections
+        expr: |
+          pg_stat_activity_count{job="postgres"} / 
+          pg_settings_max_connections{job="postgres"} * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: postgres
+        annotations:
+          summary: "High database connection usage"
+          description: "Database connection usage is {{ $value | humanizePercentage }}"
+          runbook_url: "https://docs.mallsystem.com/runbooks/high-db-connections"
+
+      # High Memory Usage
+      - alert: HighMemoryUsage
+        expr: |
+          process_resident_memory_bytes{job="mall-api"} / 1024 / 1024 > 512
+        for: 5m
+        labels:
+          severity: warning
+          service: mall-api
+        annotations:
+          summary: "High memory usage detected"
+          description: "Memory usage is {{ $value }}MB for Mall API service"
+          runbook_url: "https://docs.mallsystem.com/runbooks/high-memory-usage"
+
+      # High CPU Usage
+      - alert: HighCPUUsage
+        expr: |
+          rate(process_cpu_seconds_total{job="mall-api"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: mall-api
+        annotations:
+          summary: "High CPU usage detected"
+          description: "CPU usage is {{ $value | humanizePercentage }} for Mall API service"
+          runbook_url: "https://docs.mallsystem.com/runbooks/high-cpu-usage"
+
+      # Low Cache Hit Rate
+      - alert: LowCacheHitRate
+        expr: |
+          redis_keyspace_hits_total{job="redis"} / 
+          (redis_keyspace_hits_total{job="redis"} + redis_keyspace_misses_total{job="redis"}) * 100 < 70
+        for: 10m
+        labels:
+          severity: warning
+          service: redis
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }}"
+          runbook_url: "https://docs.mallsystem.com/runbooks/low-cache-hit-rate"
+
+      # Disk Space Alert
+      - alert: HighDiskUsage
+        expr: |
+          (
+            node_filesystem_size_bytes{job="system", fstype!="tmpfs"} - 
+            node_filesystem_free_bytes{job="system", fstype!="tmpfs"}
+          ) / 
+          node_filesystem_size_bytes{job="system", fstype!="tmpfs"} * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          service: system
+        annotations:
+          summary: "High disk usage detected"
+          description: "Disk usage is {{ $value | humanizePercentage }} on {{ $labels.device }}"
+          runbook_url: "https://docs.mallsystem.com/runbooks/high-disk-usage"
+
+      # SSL Certificate Expiry
+      - alert: SSLCertificateExpiry
+        expr: |
+          (ssl_certificate_expiry_seconds - time()) / 86400 < 30
+        for: 1h
+        labels:
+          severity: warning
+          service: nginx
+        annotations:
+          summary: "SSL certificate expiring soon"
+          description: "SSL certificate expires in {{ $value }} days"
+          runbook_url: "https://docs.mallsystem.com/runbooks/ssl-certificate-expiry"
+
+  - name: business-metrics.rules
+    rules:
+      # Low Shop Registration Rate
+      - alert: LowShopRegistrationRate
+        expr: |
+          rate(shop_registrations_total[1h]) < 0.001
+        for: 2h
+        labels:
+          severity: warning
+          service: mall-api
+          type: business
+        annotations:
+          summary: "Low shop registration rate"
+          description: "Shop registration rate is {{ $value }} per hour"
+          runbook_url: "https://docs.mallsystem.com/runbooks/low-shop-registration"
+
+      # High Authentication Failures
+      - alert: HighAuthenticationFailures
+        expr: |
+          rate(authentication_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: mall-api
+          type: security
+        annotations:
+          summary: "High authentication failure rate"
+          description: "Authentication failure rate is {{ $value }} per second"
+          runbook_url: "https://docs.mallsystem.com/runbooks/high-auth-failures"
+
+      # Low Active Users
+      - alert: LowActiveUsers
+        expr: |
+          active_users_total < 10
+        for: 1h
+        labels:
+          severity: info
+          service: mall-api
+          type: business
+        annotations:
+          summary: "Low active user count"
+          description: "Active user count is {{ $value }}"
+          runbook_url: "https://docs.mallsystem.com/runbooks/low-active-users"
+
+  - name: recording.rules
+    rules:
+      # Request Rate Recording Rule
+      - record: mall:http_requests:rate5m
+        expr: |
+          rate(http_requests_total{job="mall-api"}[5m])
+
+      # Error Rate Recording Rule
+      - record: mall:http_errors:rate5m
+        expr: |
+          rate(http_requests_total{job="mall-api", status_code=~"5.."}[5m])
+
+      # Response Time Recording Rule
+      - record: mall:http_response_time:p95
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket{job="mall-api"}[5m])
+          )
+
+      # Database Connection Usage Recording Rule
+      - record: mall:database_connections:usage_percent
+        expr: |
+          pg_stat_activity_count{job="postgres"} / 
+          pg_settings_max_connections{job="postgres"} * 100
+
+      # Memory Usage Recording Rule
+      - record: mall:memory_usage:bytes
+        expr: |
+          process_resident_memory_bytes{job="mall-api"}
+
+      # CPU Usage Recording Rule
+      - record: mall:cpu_usage:percent
+        expr: |
+          rate(process_cpu_seconds_total{job="mall-api"}[5m]) * 100

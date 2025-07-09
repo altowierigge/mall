@@ -1,0 +1,43 @@
+{
+  "name": "mall-performance-tests",
+  "version": "1.0.0",
+  "description": "Performance testing suite for Mall Admin System",
+  "main": "benchmark.js",
+  "scripts": {
+    "test": "npm run test:load && npm run test:stress && npm run benchmark",
+    "test:load": "artillery run load-test.js",
+    "test:stress": "artillery run stress-test.js",
+    "test:yaml": "artillery run performance-test.yml",
+    "benchmark": "node benchmark.js",
+    "test:quick": "artillery quick --count 10 --num 5 http://localhost:3001/api/v1/health",
+    "test:auth": "artillery quick --count 20 --num 3 -p '{\"email\":\"shop.owner@test.com\",\"password\":\"password123\"}' http://localhost:3001/api/v1/auth/login",
+    "report": "artillery report",
+    "clean": "rm -rf reports/*.json reports/*.html",
+    "setup": "npm install && mkdir -p reports"
+  },
+  "keywords": [
+    "performance",
+    "testing",
+    "load-testing",
+    "stress-testing",
+    "benchmark",
+    "artillery",
+    "mall",
+    "admin"
+  ],
+  "author": "Mall Development Team",
+  "license": "MIT",
+  "dependencies": {
+    "artillery": "^2.0.0",
+    "axios": "^1.6.0",
+    "jsonwebtoken": "^9.0.0",
+    "request": "^2.88.2"
+  },
+  "devDependencies": {
+    "artillery-plugin-metrics-by-endpoint": "^1.0.0",
+    "artillery-plugin-aws-sigv4": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
