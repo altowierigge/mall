@@ -10,12 +10,12 @@ import {
   memoryMonitoringHandler,
   optimizationRecommendationsHandler
 } from '../middleware/performance';
-import { authMiddleware } from '../middleware/auth';
+import { authenticateToken } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
 // Apply authentication middleware to all performance routes
-router.use(authMiddleware);
+router.use(authenticateToken);
 
 /**
  * @route   GET /api/v1/performance/stats

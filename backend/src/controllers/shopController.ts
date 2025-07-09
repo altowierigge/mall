@@ -3,6 +3,7 @@ import { ShopModelDB } from '../models/database/ShopModelDB';
 import { ProductModelDB } from '../models/database/ProductModelDB';
 import { AuthRequest } from '../middleware/authMiddleware';
 import { ApiResponse, DashboardStats, ActivityItem, ShopAnalytics } from '../types';
+import { MockDataService } from '../services/mockDataService';
 
 export class ShopController {
   static async getProfile(req: AuthRequest, res: Response): Promise<void> {
@@ -239,7 +240,9 @@ export class ShopController {
   static async getShops(req: Request, res: Response): Promise<void> {
     try {
       const { mallId } = req.params;
-      const shops = await ShopModelDB.findByMallId(mallId);
+      
+      // Use mock data service for development
+      const shops = await MockDataService.getShops(mallId);
 
       const response: ApiResponse<typeof shops> = {
         success: true,
@@ -260,7 +263,7 @@ export class ShopController {
   static async getFeaturedShops(req: Request, res: Response): Promise<void> {
     try {
       const { mallId } = req.params;
-      const shops = await ShopModelDB.getFeaturedShops(mallId);
+      const shops = await MockDataService.getFeaturedShops(mallId);
 
       const response: ApiResponse<typeof shops> = {
         success: true,
@@ -281,8 +284,8 @@ export class ShopController {
   static async searchShops(req: Request, res: Response): Promise<void> {
     try {
       const { mallId } = req.params;
-      const { q: query } = req.query;
-      const shops = await ShopModelDB.search(mallId, query as string || '');
+      const { q: query, category } = req.query;
+      const shops = await MockDataService.searchShops(mallId, query as string || '', category as string);
 
       const response: ApiResponse<typeof shops> = {
         success: true,
@@ -303,7 +306,7 @@ export class ShopController {
   static async getShop(req: Request, res: Response): Promise<void> {
     try {
       const { shopId } = req.params;
-      const shop = await ShopModelDB.findById(shopId);
+      const shop = await MockDataService.getShopById(shopId);
 
       if (!shop) {
         res.status(404).json({
@@ -329,10 +332,9 @@ export class ShopController {
     }
   }
 
-  static async getShopCategories(req: Request, res: Response): Promise<void> {
+  static async getShopCategories(_req: Request, res: Response): Promise<void> {
     try {
-      const { mallId } = req.params;
-      const categories = await ShopModelDB.getCategories(mallId);
+      const categories = await MockDataService.getCategories();
 
       const response: ApiResponse<typeof categories> = {
         success: true,

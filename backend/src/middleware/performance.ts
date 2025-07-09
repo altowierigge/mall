@@ -118,7 +118,7 @@ export const performanceMiddleware = (req: Request, res: Response, next: NextFun
 
   // Override res.end to capture response time
   const originalEnd = res.end;
-  res.end = function(chunk?: any, encoding?: any): void {
+  res.end = function(chunk?: any, encoding?: any): Response<any, Record<string, any>> {
     const endTime = performance.now();
     const responseTime = endTime - startTime;
     const endMemory = process.memoryUsage();
@@ -147,14 +147,14 @@ export const performanceMiddleware = (req: Request, res: Response, next: NextFun
     res.set('X-Memory-Usage', `${Math.round(endMemory.heapUsed / 1024 / 1024)}MB`);
 
     // Call original end
-    originalEnd.call(this, chunk, encoding);
+    return originalEnd.call(this, chunk, encoding);
   };
 
   next();
 };
 
 // Performance statistics endpoint
-export const performanceStatsHandler = (req: Request, res: Response): void => {
+export const performanceStatsHandler = (_req: Request, res: Response): void => {
   const stats = performanceMonitor.getStats();
   
   res.json({
@@ -186,7 +186,7 @@ export const slowRequestsHandler = (req: Request, res: Response): void => {
 };
 
 // Error requests endpoint
-export const errorRequestsHandler = (req: Request, res: Response): void => {
+export const errorRequestsHandler = (_req: Request, res: Response): void => {
   const errorRequests = performanceMonitor.getErrorRequests();
   
   res.json({
@@ -234,7 +234,7 @@ export const endpointMetricsHandler = (req: Request, res: Response): void => {
 };
 
 // Memory monitoring
-export const memoryMonitoringHandler = (req: Request, res: Response): void => {
+export const memoryMonitoringHandler = (_req: Request, res: Response): void => {
   const memoryUsage = process.memoryUsage();
   const stats = performanceMonitor.getStats();
   
@@ -255,10 +255,9 @@ export const memoryMonitoringHandler = (req: Request, res: Response): void => {
 };
 
 // Performance optimization recommendations
-export const optimizationRecommendationsHandler = (req: Request, res: Response): void => {
+export const optimizationRecommendationsHandler = (_req: Request, res: Response): void => {
   const stats = performanceMonitor.getStats();
   const slowRequests = performanceMonitor.getSlowRequests();
-  const errorRequests = performanceMonitor.getErrorRequests();
   
   const recommendations: string[] = [];
 
