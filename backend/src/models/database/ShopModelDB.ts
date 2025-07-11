@@ -136,12 +136,60 @@ export class ShopModelDB {
 
       // Build dynamic SET clause
       for (const [key, value] of Object.entries(updateData)) {
-        if (value !== undefined) {
-          const dbColumn = this.mapFieldToColumn(key);
-          if (dbColumn) {
-            setClause.push(`${dbColumn} = $${paramIndex++}`);
-            values.push(typeof value === 'object' ? JSON.stringify(value) : value);
+        if (value === undefined) continue;
+
+        // Handle nested fields
+        if (key === 'location' && typeof value === 'object') {
+          const { floor, zone, unit } = value as any;
+          if (floor !== undefined) {
+            setClause.push(`floor = $${paramIndex++}`);
+            values.push(floor);
           }
+          if (zone !== undefined) {
+            setClause.push(`zone = $${paramIndex++}`);
+            values.push(zone);
+          }
+          if (unit !== undefined) {
+            setClause.push(`unit = $${paramIndex++}`);
+            values.push(unit);
+          }
+          continue;
+        }
+
+        if (key === 'contact' && typeof value === 'object') {
+          const { phone, whatsapp, email } = value as any;
+          if (phone !== undefined) {
+            setClause.push(`phone = $${paramIndex++}`);
+            values.push(phone);
+          }
+          if (whatsapp !== undefined) {
+            setClause.push(`whatsapp = $${paramIndex++}`);
+            values.push(whatsapp);
+          }
+          if (email !== undefined) {
+            setClause.push(`email = $${paramIndex++}`);
+            values.push(email);
+          }
+          continue;
+        }
+
+        if (key === 'subscription' && typeof value === 'object') {
+          const { tier, status } = value as any;
+          if (tier !== undefined) {
+            setClause.push(`subscription_tier = $${paramIndex++}`);
+            values.push(tier);
+          }
+          if (status !== undefined) {
+            setClause.push(`subscription_status = $${paramIndex++}`);
+            values.push(status);
+          }
+          continue;
+        }
+
+        const dbColumn = this.mapFieldToColumn(key);
+        if (dbColumn) {
+          setClause.push(`${dbColumn} = $${paramIndex++}`);
+          values.push(typeof value === 'object' ? JSON.stringify(value) : value);
         }
       }
 
@@ -268,12 +316,10 @@ export class ShopModelDB {
       descriptionAr: 'description_ar',
       iconUrl: 'icon_url',
       websiteUrl: 'website_url',
-      location: 'location',
-      contact: 'contact',
       hours: 'hours',
       rating: 'rating',
       isActive: 'is_active',
-      subscription: 'subscription',
+      isFeatured: 'is_featured',
       features: 'features'
     };
 
