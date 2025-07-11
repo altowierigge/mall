@@ -39,6 +39,7 @@ jobs:
         run: npm audit --audit-level=moderate
       
       - name: Run Snyk vulnerability scan
+        if: ${{ secrets.SNYK_TOKEN != '' }}
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -85,15 +86,18 @@ jobs:
 
   docker-scan:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build Docker images
         run: |
-          docker build -t mall-backend:test ./backend
-          docker build -t mall-frontend:test ./shop-admin-dashboard
+          docker buildx build --load -t mall-backend:test ./backend
+          docker buildx build --load -t mall-frontend:test ./shop-admin-dashboard
       
       - name: Run Trivy vulnerability scanner (Backend)
         uses: aquasecurity/trivy-action@master
@@ -131,6 +135,7 @@ jobs:
           fetch-depth: 0
       
       - name: Run GitLeaks secret scanner
+        if: ${{ secrets.GITLEAKS_LICENSE != '' }}
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -146,11 +151,26 @@ jobs:
 
   compliance-check:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: shop-admin-dashboard/package-lock.json
+
+      - name: Build and start frontend server
+        working-directory: shop-admin-dashboard
+        run: |
+          npm ci
+          npm run build
+          npx serve -s build -l 3000 &
+          sleep 5
+
       - name: Run OWASP ZAP security baseline scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
@@ -187,6 +207,7 @@ jobs:
     
     steps:
       - name: Notify security scan results
+        if: ${{ secrets.SLACK_WEBHOOK != '' }}
         uses: 8398a7/action-slack@v3
         with:
           status: ${{ job.status }}
