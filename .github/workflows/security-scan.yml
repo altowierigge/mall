@@ -1,45 +1,53 @@
+---
 name: Security Scanning
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   schedule:
-    - cron: '0 2 * * 1'  # Weekly scan on Mondays at 2 AM
+    - cron: '0 2 * * 1'
 
 jobs:
   dependency-scan:
+    if: ${{ secrets.SNYK_TOKEN != '' }}
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
-      
+
       - name: Install dependencies (Backend)
         working-directory: backend
-        run: npm ci
-      
+        run: |
+          echo 'Installing backend dependencies'
+          npm ci
+
       - name: Install dependencies (Frontend)
         working-directory: shop-admin-dashboard
-        run: npm ci
-      
+        run: |
+          echo 'Installing frontend dependencies'
+          npm ci
+
       - name: Run npm audit (Backend)
         working-directory: backend
-        run: npm audit --audit-level=moderate
-      
+        run: |
+          echo 'Running npm audit for backend'
+          npm audit --audit-level=moderate
+
       - name: Run npm audit (Frontend)
         working-directory: shop-admin-dashboard
-        run: npm audit --audit-level=moderate
-      
+        run: |
+          echo 'Running npm audit for frontend'
+          npm audit --audit-level=moderate
+
       - name: Run Snyk vulnerability scan
-        if: ${{ secrets.SNYK_TOKEN != '' }}
         uses: snyk/actions/node@master
         env:
           SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
@@ -49,25 +57,24 @@ jobs:
 
   code-scan:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: javascript
-      
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
-      
+
       - name: Run ESLint security rules
         working-directory: backend
         run: |
           npm ci
           npx eslint . --ext .ts,.js --config .eslintrc.security.json
-      
+
       - name: Run Semgrep security scan
         uses: returntocorp/semgrep-action@v1
         with:
@@ -77,7 +84,7 @@ jobs:
             p/typescript
             p/react
           generateSarif: "1"
-      
+
       - name: Upload Semgrep results to GitHub
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -86,7 +93,6 @@ jobs:
 
   docker-scan:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -95,52 +101,54 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker images
+        shell: bash
         run: |
-          docker buildx build --load -t mall-backend:test ./backend
-          docker buildx build --load -t mall-frontend:test ./shop-admin-dashboard
-      
+          echo 'Building backend image'
+          docker buildx build --load --tag mall-backend:test ./backend
+          echo 'Building frontend image'
+          docker buildx build --load --tag m-ft:test ./shop-admin-dashboard
+
       - name: Run Trivy vulnerability scanner (Backend)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'mall-backend:test'
-          format: 'sarif'
-          output: 'trivy-backend.sarif'
-      
+          image-ref: mall-backend:test
+          format: sarif
+          output: trivy-backend.sarif
+
       - name: Run Trivy vulnerability scanner (Frontend)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: 'mall-frontend:test'
-          format: 'sarif'
-          output: 'trivy-frontend.sarif'
-      
-      - name: Upload Trivy scan results to GitHub Security tab
+          image-ref: mall-frontend:test
+          format: sarif
+          output: trivy-frontend.sarif
+
+      - name: Upload Trivy backend results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: 'trivy-backend.sarif'
-      
-      - name: Upload Trivy scan results to GitHub Security tab
+          sarif_file: trivy-backend.sarif
+
+      - name: Upload Trivy frontend results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: 'trivy-frontend.sarif'
+          sarif_file: trivy-frontend.sarif
 
   secret-scan:
     runs-on: ubuntu-latest
-    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      
+
       - name: Run GitLeaks secret scanner
         if: ${{ secrets.GITLEAKS_LICENSE != '' }}
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
-      
+
       - name: Run TruffleHog secret scanner
         uses: trufflesecurity/trufflehog@main
         with:
@@ -151,7 +159,6 @@ jobs:
 
   compliance-check:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -165,21 +172,30 @@ jobs:
 
       - name: Build and start frontend server
         working-directory: shop-admin-dashboard
+        shell: bash
         run: |
+          echo 'Building frontend for ZAP scan'
           npm ci
           npm run build
           npx serve -s build -l 3000 &
-          sleep 5
+          echo 'Waiting for frontend to respond...'
+          npx wait-on http://localhost:3000
 
       - name: Run OWASP ZAP security baseline scan
         uses: zaproxy/action-baseline@v0.10.0
         with:
-          target: 'http://localhost:3000'
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'
-      
+          target: http://localhost:3000
+          rules_file_name: .zap/rules.tsv
+          cmd_options: -a
+
+      - name: Stop frontend server
+        if: always()
+        shell: bash
+        run: pkill -f "serve" || true
+
       - name: Create security report
         if: always()
+        shell: bash
         run: |
           mkdir -p security-reports
           echo "# Security Scan Report" > security-reports/README.md
@@ -191,7 +207,7 @@ jobs:
           echo "- Container image scanning" >> security-reports/README.md
           echo "- Secret detection" >> security-reports/README.md
           echo "- OWASP ZAP baseline scan" >> security-reports/README.md
-      
+
       - name: Upload security reports
         uses: actions/upload-artifact@v4
         if: always()
@@ -201,13 +217,16 @@ jobs:
           retention-days: 30
 
   notify:
-    needs: [dependency-scan, code-scan, docker-scan, secret-scan, compliance-check]
+    if: ${{ secrets.SLACK_WEBHOOK != '' }}
+    needs:
+      - dependency-scan
+      - code-scan
+      - docker-scan
+      - secret-scan
+      - compliance-check
     runs-on: ubuntu-latest
-    if: always()
-    
     steps:
       - name: Notify security scan results
-        if: ${{ secrets.SLACK_WEBHOOK != '' }}
         uses: 8398a7/action-slack@v3
         with:
           status: ${{ job.status }}
